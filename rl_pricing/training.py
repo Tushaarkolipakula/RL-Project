@@ -6,6 +6,8 @@ four methods from the paper (Section VIII / Table II):
   2. Rule-Based
   3. Q-Learning
   4. Policy Gradient
+
+Also generates the synthetic dataset (test split) before training begins.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import time
 
 from rl_pricing.agents import PolicyGradientAgent, ReplayQLearningAgent
 from rl_pricing.config import DEFAULT_OUTPUT_DIR, PricingConfig
+from rl_pricing.dataset import build_and_save as generate_dataset
 from rl_pricing.environment import LoanPricingEnv
 from rl_pricing.evaluation import MetricSummary, evaluate_agent
 from rl_pricing.policies import FixedRatePolicy, RuleBasedPolicy
@@ -115,13 +118,13 @@ def train_policy_gradient_agent(
         seed=seed,
         method="policy_gradient",
         train_rewards=train_rewards,
-        final_epsilon=0.0,   # PG has no epsilon
+        final_epsilon=0.0,
         model_path=str(model_path),
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Full experiment: train both RL agents, evaluate all 4 paper methods
+# Full experiment: generate dataset, train both RL agents, evaluate all 4
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_full_experiment(
@@ -131,13 +134,15 @@ def run_full_experiment(
     eval_episodes: int | None = None,
     output_dir: str | Path | None = None,
 ) -> dict:
-    """Train RL agents, evaluate all four paper methods, return results dict.
+    """Generate dataset, train RL agents, evaluate four methods, return results.
 
-    The four methods evaluated are, in order:
-      1. Fixed Pricing    (baseline)
-      2. Rule-Based       (baseline)
-      3. Q-Learning       (RL — trained here)
-      4. Policy Gradient  (RL — trained here)
+    Steps in order:
+      1. Generate synthetic_dataset.csv and dataset_summary.json (test split,
+         seeds 10 000+ so they never overlap with training seeds 0-4).
+      2. Train Q-Learning agents (one per seed).
+      3. Train Policy Gradient agents (one per seed).
+      4. Evaluate Fixed Pricing, Rule-Based, Q-Learning, Policy Gradient.
+      5. Write results.json and return the full results dict.
     """
 
     selected_seeds = list(config.seeds if seeds is None else seeds)
@@ -154,7 +159,21 @@ def run_full_experiment(
 
     started = time.time()
 
-    # ── Train Q-Learning agents ──────────────────────────────────────────────
+    # ── Step 1: Generate synthetic dataset (test split, seeds 10000+) ────────
+    # Skipped automatically if the file already exists, so re-running train.py
+    # does not regenerate unnecessarily.
+    dataset_csv = out_dir / "data" / "synthetic_dataset.csv"
+    if not dataset_csv.exists():
+        print("Generating synthetic dataset …")
+        generate_dataset(
+            output_dir=out_dir,
+            n_episodes=n_eval,
+            config=config,
+        )
+    else:
+        print(f"Dataset already exists at {dataset_csv} — skipping generation.")
+
+    # ── Step 2: Train Q-Learning agents ──────────────────────────────────────
     q_agents: dict[int, ReplayQLearningAgent] = {}
     q_runs: list[TrainingResult] = []
     for seed in selected_seeds:
@@ -164,7 +183,7 @@ def run_full_experiment(
         q_agents[seed] = agent
         q_runs.append(result)
 
-    # ── Train Policy Gradient agents ─────────────────────────────────────────
+    # ── Step 3: Train Policy Gradient agents ─────────────────────────────────
     pg_agents: dict[int, PolicyGradientAgent] = {}
     pg_runs: list[TrainingResult] = []
     for seed in selected_seeds:
@@ -174,12 +193,12 @@ def run_full_experiment(
         pg_agents[seed] = agent
         pg_runs.append(result)
 
-    # ── Evaluate all four methods ────────────────────────────────────────────
+    # ── Step 4: Evaluate all four methods ────────────────────────────────────
     method_specs = [
-        ("Fixed Pricing",    lambda seed: FixedRatePolicy(config=config)),
-        ("Rule-Based",       lambda seed: RuleBasedPolicy(config=config)),
-        ("Q-Learning",       lambda seed: q_agents[seed]),
-        ("Policy Gradient",  lambda seed: pg_agents[seed]),
+        ("Fixed Pricing",   lambda seed: FixedRatePolicy(config=config)),
+        ("Rule-Based",      lambda seed: RuleBasedPolicy(config=config)),
+        ("Q-Learning",      lambda seed: q_agents[seed]),
+        ("Policy Gradient", lambda seed: pg_agents[seed]),
     ]
 
     summaries: list[MetricSummary] = []
@@ -194,8 +213,7 @@ def run_full_experiment(
         )
         summaries.append(summary)
 
-    # ── Serialise results ────────────────────────────────────────────────────
-    # training list groups runs by method so the plotter can draw both curves
+    # ── Step 5: Serialise results ─────────────────────────────────────────────
     all_runs = q_runs + pg_runs
     result = {
         "config": config.__dict__,
