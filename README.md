@@ -1,36 +1,18 @@
-# RL Dynamic Pricing of Financial Products — Group 31
+# RL Dynamic Pricing for Financial Products
 
-Reinforcement learning agents that dynamically price retail loans by learning to balance profit maximisation against customer acceptance. The project implements and compares four pricing strategies from the accompanying report.
+Reinforcement learning agents that learn to price personal loans dynamically. The pricing decision is modelled as a Markov Decision Process: at each step the agent observes demand, customer credit score, market interest rate, and recent acceptance history, then adjusts the offered rate by one of five discrete increments. Reward is risk-adjusted profit on originated loans.
 
----
-
-## Methods
+Five methods are implemented and compared:
 
 | Method | Type | Description |
 |---|---|---|
-| **Fixed Pricing** | Baseline | Constant 7% rate offered to every customer |
-| **Rule-Based** | Baseline | Credit-tier heuristic: 9.5% / 7.0% / 5.5% for poor / fair / good credit |
-| **Q-Learning** | RL (tabular) | Off-policy Q-learning with Dyna-style replay planning |
-| **Policy Gradient** | RL (neural) | REINFORCE with a two-layer softmax network (64 → 32 → 5) |
+| Fixed Pricing | Baseline | Constant 8.5% regardless of customer or market |
+| Rule-Based | Baseline | Credit-tier heuristic: 10.5% / 8.5% / 6.5% for poor / fair / good credit |
+| Q-Learning | RL | Tabular Q-learning with Dyna-style replay planning |
+| Policy Gradient | RL | REINFORCE with a two-layer softmax network (64 → 32 → 5) |
+| DQN | RL | Double Deep Q-Network with experience replay and target network |
 
-The two RL agents observe the full state vector `(demand, credit, market_rate, rolling_acceptance)` and adapt rates in real time. Baselines are static and serve as lower-bound references.
-
----
-
-## Expected Results (Table II)
-
-| Method | Profit / ep | Acceptance Rate | Avg Rate |
-|---|---|---|---|
-| Fixed Pricing | Lowest | Low | Fixed ~7% |
-| Rule-Based | Moderate | Moderate | Tiered |
-| Q-Learning | **High** | Moderate–high | Adaptive ~6.3–6.5% |
-| Policy Gradient | **High** | Moderate–high | Adaptive ~5.9–6.3% |
-
-**Key findings:**
-- Both RL agents discover the ~6.3% optimal rate band where expected profit peaks, outperforming fixed 7% pricing.
-- Q-Learning converges to the highest single-episode profit via off-policy bootstrapping.
-- Policy Gradient achieves a **higher acceptance rate** at comparable profit because REINFORCE optimises full episode returns, naturally penalising long rejection streaks.
-- Rule-Based pricing is surprisingly competitive with Fixed because credit-tier differentiation partially recovers margin from good-credit borrowers, but it remains blind to demand and market signals.
+All three RL agents are pure NumPy — no external deep-learning library is required.
 
 ---
 
@@ -39,31 +21,32 @@ The two RL agents observe the full state vector `(demand, credit, market_rate, r
 ```
 .
 ├── configs/
-│   └── default.json           # Default config values
-├── outputs/                   # Training artefacts and result JSON
+│   └── default.json
+├── outputs/                        # created on first run
 │   └── full/
 │       ├── results.json
-│       └── results_plot.png
+│       ├── results_plot.png
+│       └── data/
+│           ├── synthetic_dataset.csv
+│           └── dataset_summary.json
 ├── rl_pricing/
 │   ├── __init__.py
-│   ├── agents.py              # ReplayQLearningAgent + PolicyGradientAgent
-│   ├── config.py              # All hyperparameters (documented)
-│   ├── environment.py         # LoanPricingEnv (reset / step / action_space_n)
-│   ├── evaluation.py          # Metrics, episode runner, summary table
-│   ├── mdp.py                 # Acceptance model, reward, action helpers
-│   ├── plotting.py            # Three-panel result visualisation
-│   ├── policies.py            # FixedRatePolicy, RuleBasedPolicy
-│   ├── state.py               # Discretisation + feature normalisation
-│   └── training.py            # train_q_learning_agent, train_policy_gradient_agent,
-│                              #   run_full_experiment
-├── scripts/
-│   ├── evaluate.py            # Evaluate saved models without retraining
-│   ├── smoke_test.py          # Fast contract check (< 5 s)
-│   └── train.py               # Main entry point
-├── tests/
-│   └── test_contract.py
-├── README.md
-└── requirements.txt
+│   ├── agents.py                   # Q-Learning, Policy Gradient
+│   ├── config.py                   # all hyperparameters in one place
+│   ├── dataset.py                  # synthetic dataset generation
+│   ├── dqn_agent.py                # DQN (Double DQN, pure NumPy)
+│   ├── environment.py              # LoanPricingEnv
+│   ├── evaluation.py               # metrics and summary table
+│   ├── mdp.py                      # acceptance model, reward, MDP helpers
+│   ├── plotting.py                 # learning curves and comparison plots
+│   ├── policies.py                 # Fixed, Rule-Based, Profit-Greedy, Balanced
+│   ├── state.py                    # feature encoding and discretisation
+│   └── training.py                 # training loops for all three RL agents
+└── scripts/
+    ├── evaluate.py                 # evaluate saved models without retraining
+    ├── generate_dataset.py         # generate synthetic_dataset.csv standalone
+    ├── smoke_test.py               # fast contract check
+    └── train.py                    # main entry point
 ```
 
 ---
@@ -74,152 +57,193 @@ The two RL agents observe the full state vector `(demand, credit, market_rate, r
 pip install -r requirements.txt
 ```
 
-Only `numpy` is required for training and evaluation. `matplotlib` is optional — the plotting module falls back to SVG if it is unavailable.
+Only NumPy is required for training and evaluation. Matplotlib is used for plots when installed; the code writes an SVG fallback if it is not.
 
 ---
 
-## Running the Experiment
+## Running Experiments
 
-### Quick contract check (< 5 s)
-
+### Quick smoke test
+Verifies the environment interface and all agents run without errors:
 ```bash
 python scripts/smoke_test.py
 ```
 
-### Fast test run (2 seeds, 100 episodes)
-
+### Quick experiment (2 seeds, 500 episodes)
 ```bash
 python scripts/train.py \
-  --seeds 0 1 \
-  --train-episodes 100 \
-  --eval-episodes 20 \
-  --episode-length 50 \
-  --output-dir outputs/quick \
-  --no-plot
+    --seeds 0 1 \
+    --train-episodes 500 \
+    --eval-episodes 50 \
+    --episode-length 100 \
+    --output-dir outputs/quick \
+    --no-plot
 ```
 
-### Full paper-scale experiment (5 seeds × 5 000 episodes)
-
+### Paper-scale experiment (5 seeds, 5000 episodes)
 ```bash
 python scripts/train.py \
-  --seeds 0 1 2 3 4 \
-  --train-episodes 5000 \
-  --eval-episodes 500 \
-  --episode-length 200 \
-  --output-dir outputs/full
+    --seeds 0 1 2 3 4 \
+    --train-episodes 5000 \
+    --eval-episodes 500 \
+    --episode-length 200 \
+    --output-dir outputs/full
 ```
 
-This takes 20–60 minutes depending on hardware. Results are saved to `outputs/full/results.json` and a three-panel PNG plot is generated automatically.
+### Original two-agent experiment (skip DQN)
+```bash
+python scripts/train.py --no-dqn
+```
 
 ### Evaluate saved models without retraining
-
 ```bash
 # Baselines only
-python scripts/evaluate.py --episodes 200 --seeds 0 1 2
+python scripts/evaluate.py
 
-# With saved RL models
+# All five methods
 python scripts/evaluate.py \
-  --q-model  outputs/full/q_learning_seed0.pkl \
-  --pg-model outputs/full/policy_gradient_seed0.pkl \
-  --episodes 200 --seeds 0
+    --q-model   outputs/full/q_learning_seed0.pkl \
+    --pg-model  outputs/full/policy_gradient_seed0.pkl \
+    --dqn-model outputs/full/dqn_seed0.pkl
+
+# Custom episode count and seeds
+python scripts/evaluate.py \
+    --dqn-model outputs/full/dqn_seed0.pkl \
+    --episodes 200 \
+    --seeds 0 1 2
 ```
 
----
-
-## Hyperparameters
-
-All values live in `rl_pricing/config.py` and are documented inline. The most important knobs:
-
-### Q-Learning
-
-| Parameter | Value | Reason |
-|---|---|---|
-| `q_alpha` | **0.12** | Slightly above the paper's 0.1 for faster convergence within 5 000 episodes |
-| `q_epsilon_start` | 1.0 | Full exploration at episode 0 |
-| `q_epsilon_decay` | **0.998** | Reaches ε = 0.1 by ~episode 1 150, leaving 3 850 exploitation episodes |
-| `q_epsilon_min` | 0.05 | Keeps 5 % exploration throughout; prevents Q-table lock-in |
-| `planning_steps` | **12** | Extra Dyna sweeps per real step; speeds up convergence (paper uses 8) |
-| `discount` | 0.95 | Matches the paper |
-
-### Policy Gradient
-
-| Parameter | Value | Reason |
-|---|---|---|
-| `pg_lr` | **2e-3** | Double the paper's 1e-3; REINFORCE variance benefits from a larger initial step |
-| `pg_hidden1` | 64 | Matches paper Section VI-B |
-| `pg_hidden2` | 32 | Matches paper Section VI-B |
-| `discount` | 0.95 | Matches the paper |
-
-> **Note:** The environment (acceptance model, default-risk model, market dynamics, reward function) is unchanged from the paper's specification. Only agent hyperparameters were tuned.
+### Generate the synthetic dataset separately
+```bash
+python scripts/generate_dataset.py --episodes 500 --output-dir outputs/data
+```
 
 ---
 
 ## MDP Formulation
 
-**State** `sₜ = (dₜ, cₜ, mₜ, aₜ)` where:
-- `dₜ ∈ {low, medium, high}` — current demand level
-- `cₜ ∈ {1, 2, 3}` — customer credit category (poor → good)
-- `mₜ ∈ ℝ` — prevailing market interest rate
-- `aₜ ∈ [0, 1]` — rolling acceptance rate over the last 50 steps
+**State** `sₜ = (demand, credit, market_rate, rolling_acceptance)`
 
-**Actions** `A = {−0.50%, −0.25%, 0%, +0.25%, +0.50%}` — five discrete rate adjustments clipped to `[3%, 15%]`.
+| Field | Values | Description |
+|---|---|---|
+| `demand` | 0, 1, 2 | Low / medium / high demand level |
+| `credit` | 1, 2, 3 | Poor / fair / good credit score category |
+| `market_rate` | [0.03, 0.10] | Mean-reverting market interest rate |
+| `rolling_acceptance` | [0, 1] | Fraction of loans accepted in the last 50 steps |
 
-**Reward** (paper Eq. 3):
-
-```
-Rₜ = Aₜ(rₜ − c)L − λ Dₜ
-```
-
-where `Aₜ` is the acceptance indicator, `c = 3%` is cost of capital, `L = 1` is normalised loan amount, and `Dₜ` is the default probability. Risk cost is charged **only on accepted loans**.
-
-**Acceptance probability** (paper Eq. 4):
+**Actions** — five discrete rate adjustments applied to the current offered rate:
 
 ```
-P(accept) = sigmoid(α − β rₜ + δ cₜ + demand_shift)
+{−0.50%, −0.25%, 0%, +0.25%, +0.50%}
 ```
 
-Calibrated so good-credit borrowers accept ~73 % at 3 % and ~40 % at 6 %.
+The offered rate is clipped to [3%, 15%] after each adjustment. Because actions adjust the *current* rate rather than setting it directly, all learning agents track the rate internally — this keeps the environment interface clean while preserving the Markov property.
+
+**Reward** — risk-adjusted profit on originated loans only:
+
+```
+Rₜ = Aₜ · (rₜ − c) · L  −  Aₜ · λ · D(creditₜ)
+```
+
+where `Aₜ ∈ {0,1}` is loan acceptance, `rₜ` is the offered rate, `c = 3%` is the cost of capital, `L = 1.0` is the normalised loan amount, and `D(credit)` is the default probability for the customer's credit tier. Risk cost is charged only on accepted loans.
+
+**Customer acceptance** follows a calibrated logistic model:
+
+```
+P(accept) = sigmoid(α − β·rₜ + δ·credit + demand_shift)
+```
+
+with `α = 1.138`, `β = 0.55`, `δ = 0.5`. This gives approximately 73% acceptance at 3% for a good-credit customer.
 
 ---
 
-## Implementation Notes
+## Agents
 
-### Q-Learning agent (`ReplayQLearningAgent`)
+### Q-Learning (`rl_pricing/agents.py`)
+Tabular Q-learning with Dyna-style replay planning. The state is discretised into a 5-tuple `(demand, credit, market_bucket, acceptance_bucket, rate_bucket)`. Q-values are initialised using the expected one-step reward as a prior, which dramatically accelerates early learning.
 
-- Tabular Q-table keyed on a 5-tuple `(demand, credit, market_bucket, acceptance_bucket, rate_bucket)`. Including the **internally tracked current rate** as the fifth dimension restores the Markov property missing when actions are incremental adjustments.
-- Q-values are initialised with the expected one-step reward (model-based prior) so the agent starts with sensible values rather than all zeros.
-- Dyna-style planning: after every real transition the agent replays `planning_steps` past transitions from a circular buffer.
+Key hyperparameters: `α = 0.12`, `ε₀ = 1.0`, `ε_decay = 0.998`, `ε_min = 0.05`, `γ = 0.95`, `planning_steps = 12`.
 
-### Policy Gradient agent (`PolicyGradientAgent`)
+### Policy Gradient (`rl_pricing/agents.py`)
+REINFORCE with a two-layer softmax network. The input is a 5-dimensional normalised feature vector from `encode_features()`. Full-episode Monte Carlo returns are used; returns are normalised per episode for gradient stability. Optimised with Adam.
 
-- Two-layer ReLU network: `state(5) → 64 → 32 → 5 (softmax)`.
-- Input is the normalised 5-D feature vector from `state.encode_features()`.
-- Full-episode REINFORCE (paper Eq. 9): gradients are accumulated across all timesteps in an episode and applied once at the end.
-- Returns are normalised per episode (zero mean, unit std) to reduce gradient variance.
-- Adam optimiser implemented in pure NumPy — no external deep-learning library required.
+Key hyperparameters: `lr = 2×10⁻³`, hidden layers 64 → 32, `γ = 0.95`.
 
-### Why PG achieves higher acceptance
+### DQN (`rl_pricing/dqn_agent.py`)
+Double Deep Q-Network. Uses the same 5-dimensional feature vector as Policy Gradient. Key components:
 
-REINFORCE optimises the **sum of discounted rewards over a full episode**. A sequence of rejections within an episode directly reduces the return `Gₜ` and pushes the policy toward lower, more acceptable rates. Q-learning's bootstrapped, off-policy update does not see this sequential rejection penalty in the same way, so it settles at a slightly higher rate with correspondingly lower acceptance.
+- **Double DQN** — the online network selects the next action; the target network scores it. This removes the maximisation bias that causes plain DQN to overestimate Q-values.
+- **Experience replay** — a circular buffer of 20,000 transitions. Mini-batches of 64 break temporal correlations in the gradient signal.
+- **Target network** — hard-copied from the online network every 20 episodes, stabilising the bootstrapped TD targets.
+- **Huber loss** — quadratic for small TD errors, linear for large ones. Appropriate here because accepted high-rate loans create occasional large positive reward spikes.
+- **Adam optimiser** — consistent with the Policy Gradient agent.
+
+Key hyperparameters: `lr = 1×10⁻³`, hidden layers 64 → 32, `ε₀ = 1.0`, `ε_decay = 0.998`, `ε_min = 0.05`, `γ = 0.95`, `batch_size = 64`, `target_update = 20` episodes, `warmup_steps = 500`.
+
+---
+
+## The Synthetic Dataset
+
+Running `train.py` (or `generate_dataset.py`) creates `outputs/data/synthetic_dataset.csv`. Each row is one loan application — one environment timestep — and records the **customer and market side only**:
+
+| Column | Description |
+|---|---|
+| `episode`, `step`, `seed` | Position in the simulation |
+| `demand`, `credit` | Customer characteristics |
+| `market_rate` | Prevailing market rate at this step |
+| `rolling_accept` | Rolling acceptance rate the agent would observe |
+| `optimal_rate` | Rate that maximises expected reward for this customer |
+| `p_accept_at_optimal` | Acceptance probability at the optimal rate |
+| `default_prob` | Default probability for this credit tier |
+
+The dataset deliberately **omits the agent's offered rate and loan acceptance outcome** because those depend on the policy. It is a characterisation of the environment population, useful for reporting dataset statistics, offline analysis, and reproducibility. Seeds for dataset generation start at 10,000 and never overlap with training seeds (0–4).
+
+All three RL agents learn entirely through **online interaction with `LoanPricingEnv`** — the CSV is not used during training.
+
+---
+
+## Configuration
+
+All hyperparameters live in `rl_pricing/config.py` as a frozen dataclass `PricingConfig`. Nothing is hardcoded elsewhere. To change a hyperparameter, either modify the dataclass default or pass a custom instance:
+
+```python
+from rl_pricing.config import PricingConfig
+from rl_pricing.training import run_full_experiment
+
+config = PricingConfig(
+    train_episodes=2000,
+    dqn_lr=5e-4,
+    dqn_target_update=10,
+)
+run_full_experiment(config=config, output_dir="outputs/custom")
+```
 
 ---
 
 ## Output Files
 
-After a full run `outputs/full/` contains:
+After a full training run, `outputs/full/` contains:
 
-| File | Description |
+| File | Contents |
 |---|---|
-| `results.json` | Full experiment data: config, training curves, all metric summaries |
-| `results_plot.png` | Three-panel figure: training curves, gross-profit bars, rate-acceptance scatter |
-| `q_learning_seed{n}.pkl` | Saved Q-table for seed n |
-| `policy_gradient_seed{n}.pkl` | Saved PG network weights for seed n |
+| `results.json` | Config, per-seed training rewards, and evaluation summary for all methods |
+| `results_plot.png` | Learning curves and comparison bar charts |
+| `q_learning_seed{N}.pkl` | Saved Q-table for seed N |
+| `policy_gradient_seed{N}.pkl` | Saved PG network weights for seed N |
+| `dqn_seed{N}.pkl` | Saved DQN network weights for seed N |
+| `data/synthetic_dataset.csv` | 100,000-row dataset (500 episodes × 200 steps) |
+| `data/dataset_summary.json` | Distribution statistics for the dataset |
 
 ---
 
-## References
+## Requirements
 
-1. R. S. Sutton and A. G. Barto, *Reinforcement Learning: An Introduction*, 2nd ed. MIT Press, 2018.
-2. V. Mnih et al., "Human-level control through deep reinforcement learning," *Nature*, vol. 518, pp. 529–533, 2015.
-3. K. J. Ferreira, B. H. A. Lee, and D. Simchi-Levi, "Analytics for an online retailer: Demand forecasting and price optimization," *M&SOM*, vol. 18, no. 1, pp. 69–88, 2016.
-4. L. Chen, A. Mislove, and C. Wilson, "An empirical analysis of algorithmic pricing on Amazon Marketplace," *Proc. WWW*, pp. 1339–1349, 2016.
+```
+numpy
+matplotlib   # optional — SVG fallback used if not installed
+```
+
+Python 3.10 or later is required (uses `match` syntax and `X | Y` type unions).
+
+---
+

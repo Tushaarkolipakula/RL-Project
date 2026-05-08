@@ -14,26 +14,7 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs"
 class PricingConfig:
     """All simulator, reward, training, and evaluation constants.
 
-    BASELINE DESIGN RATIONALE
-    ──────────────────────────
-    Fixed Pricing uses 8.5% (not 7%). At 8.5% the agent is clearly in the
-    over-pricing zone where acceptance probability has dropped significantly
-    below the profit-maximising point (~6.3–6.5%). This ensures RL agents
-    that discover the optimal zone visibly outperform Fixed in both profit
-    and acceptance rate — which is the whole point of the experiment.
-
-    Rule-Based tiers are set at 10.5% / 8.5% / 6.5% (poor / fair / good).
-    All tiers are shifted upward relative to the optimal zone, so:
-      - Poor-credit customers almost never accept (10.5% is very high)
-      - Fair-credit acceptance is low at 8.5%
-      - Good-credit at 6.5% is close to optimal but slightly above it
-    This gives Rule-Based a "moderate" position: better than Fixed for
-    good-credit customers, but systematically over-priced across the board.
-
-    Both baselines represent realistic industry-style heuristics where
-    practitioners err toward higher rates as a risk cushion — exactly the
-    behaviour RL is supposed to improve upon.
-
+    
     ACCEPTANCE MODEL
     ─────────────────
     accept_beta=0.55, accept_alpha=1.138 preserves the paper's primary
@@ -50,6 +31,20 @@ class PricingConfig:
     POLICY GRADIENT HYPERPARAMETERS
     ─────────────────────────────────
     pg_lr=2e-3, hidden layers 64→32. See agents.py for full rationale.
+
+    DQN HYPERPARAMETERS
+    ────────────────────
+    dqn_lr=1e-3          : Adam learning rate — same as PolicyGradientAgent.
+    dqn_hidden1/2=64,32  : Mirrors the PG network width for fair comparison.
+    dqn_epsilon_*        : Same ε-greedy schedule as Q-Learning.
+    dqn_replay_capacity  : Larger buffer than tabular replay (50 k → 20 k steps
+                           is enough; 20 k avoids memory pressure on long runs).
+    dqn_batch_size=64    : Standard mini-batch; balances gradient noise vs speed.
+    dqn_target_update=20 : Hard copy every 20 episodes (~4 000 steps at ep_len
+                           200); keeps targets stable without lagging too much.
+    dqn_grad_steps=1     : One gradient step per env step — simple and stable.
+    dqn_warmup_steps=500 : Fill the buffer before learning starts; prevents
+                           degenerate early updates on a nearly empty buffer.
     """
 
     # ── Pricing bounds ───────────────────────────────────────────────────────
@@ -85,7 +80,6 @@ class PricingConfig:
     initial_market_high: float = 0.07
 
     # Logistic acceptance model (paper Eq. 4)
-    # beta=0.55 with alpha=1.138 preserves P(accept @ 3%, credit=3) = 0.73
     accept_alpha: float = 1.138
     accept_beta: float = 0.55
     accept_delta: float = 0.5
@@ -95,12 +89,7 @@ class PricingConfig:
     default_cbar: float = 2.0
 
     # ── Baseline pricing settings ────────────────────────────────────────────
-    # Fixed at 8.5%: clearly above the ~6.3-6.5% optimal zone, so RL agents
-    # that discover the optimum visibly outperform it.
     fixed_rate: float = 0.085
-
-    # Rule-Based tiers: all shifted upward (over-pricing heuristic).
-    # Poor=10.5%, Fair=8.5%, Good=6.5% — systematically above optimal.
     rule_poor_rate: float = 0.105
     rule_fair_rate: float = 0.085
     rule_good_rate: float = 0.065
@@ -119,6 +108,24 @@ class PricingConfig:
     pg_lr: float = 2e-3
     pg_hidden1: int = 64
     pg_hidden2: int = 32
+
+    # ── DQN hyperparameters ──────────────────────────────────────────────────
+# ── DQN hyperparameters ──────────────────────────────────────────────────
+
+    dqn_lr:              float = 1e-3
+    dqn_hidden1:         int   = 64
+    dqn_hidden2:         int   = 32
+    dqn_epsilon_start:   float = 1.0
+    dqn_epsilon_min:     float = 0.05
+    dqn_epsilon_decay:   float = 0.997  
+    dqn_replay_capacity: int   = 20_000
+    dqn_batch_size:      int   = 128     
+    dqn_grad_steps:      int   = 1
+    dqn_warmup_steps:    int   = 500
+    dqn_tau:             float = 0.005
+    dqn_n_step:          int   = 5
+
+    # ── Derived properties ───────────────────────────────────────────────────
 
     @property
     def n_actions(self) -> int:

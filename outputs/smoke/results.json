@@ -1,0 +1,260 @@
+{
+  "config": {
+    "r_min": 0.03,
+    "r_max": 0.15,
+    "cost_of_capital": 0.03,
+    "loan_amount": 1.0,
+    "risk_loss_scale": 0.006,
+    "actions": [
+      -0.005,
+      -0.0025,
+      0.0,
+      0.0025,
+      0.005
+    ],
+    "episode_length": 30,
+    "acceptance_window": 50,
+    "train_episodes": 20,
+    "eval_episodes": 5,
+    "seeds": [
+      0
+    ],
+    "discount": 0.95,
+    "credit_categories": [
+      1,
+      2,
+      3
+    ],
+    "credit_probs": [
+      0.25,
+      0.5,
+      0.25
+    ],
+    "demand_levels": [
+      0,
+      1,
+      2
+    ],
+    "demand_probs": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "demand_logit_shift": [
+      -0.25,
+      0.0,
+      0.25
+    ],
+    "market_eta": 0.05,
+    "market_star": 0.05,
+    "market_sigma": 0.002,
+    "market_min": 0.03,
+    "market_max": 0.1,
+    "initial_market_low": 0.04,
+    "initial_market_high": 0.07,
+    "accept_alpha": 1.138,
+    "accept_beta": 0.55,
+    "accept_delta": 0.5,
+    "default_k": 2.0,
+    "default_cbar": 2.0,
+    "fixed_rate": 0.085,
+    "rule_poor_rate": 0.105,
+    "rule_fair_rate": 0.085,
+    "rule_good_rate": 0.065,
+    "target_rate_grid_size": 241,
+    "q_alpha": 0.12,
+    "q_epsilon_start": 1.0,
+    "q_epsilon_min": 0.05,
+    "q_epsilon_decay": 0.998,
+    "replay_capacity": 50000,
+    "planning_steps": 12,
+    "pg_lr": 0.002,
+    "pg_hidden1": 64,
+    "pg_hidden2": 32,
+    "dqn_lr": 0.001,
+    "dqn_hidden1": 64,
+    "dqn_hidden2": 32,
+    "dqn_epsilon_start": 1.0,
+    "dqn_epsilon_min": 0.05,
+    "dqn_epsilon_decay": 0.998,
+    "dqn_replay_capacity": 20000,
+    "dqn_batch_size": 64,
+    "dqn_target_update": 20,
+    "dqn_grad_steps": 1,
+    "dqn_warmup_steps": 500
+  },
+  "runtime_seconds": 0.9862844944000244,
+  "training": [
+    {
+      "seed": 0,
+      "method": "q_learning",
+      "final_epsilon": 0.9607509570263429,
+      "model_path": "/home/sidhanth/rl/outputs/smoke/q_learning_seed0.pkl",
+      "train_rewards": [
+        0.00648497401708424,
+        0.0038624886828200326,
+        0.006604395391688223,
+        0.00843316013559012,
+        0.005147398478883211,
+        0.00499858261729182,
+        0.007516735197461415,
+        0.005805157463594934,
+        0.00016092908931692138,
+        0.0020709036151474332,
+        0.005588169360520068,
+        0.004902666266293691,
+        0.0014450368442355942,
+        0.0035765041596323324,
+        0.004984850856250536,
+        0.003984830084827388,
+        0.00654914483734,
+        0.004439549039143082,
+        0.004913665082090122,
+        0.010483116797455337
+      ]
+    },
+    {
+      "seed": 0,
+      "method": "policy_gradient",
+      "final_epsilon": 0.0,
+      "model_path": "/home/sidhanth/rl/outputs/smoke/policy_gradient_seed0.pkl",
+      "train_rewards": [
+        0.003803959514942065,
+        0.0034977374504235556,
+        0.004521062058354889,
+        0.002797197592770902,
+        0.0002801779548293038,
+        0.00397618841699453,
+        0.0004927764511390597,
+        0.0005871378088373938,
+        0.0012095211114794618,
+        0.006280928740015731,
+        0.0056786766115911585,
+        0.010067376105742742,
+        0.00040447555855560173,
+        0.0022876891697229725,
+        -0.000254803524831858,
+        0.004289269369829428,
+        0.005782966060183716,
+        0.0026980835761439763,
+        0.007307248992869752,
+        0.006363417539758296
+      ]
+    },
+    {
+      "seed": 0,
+      "method": "dqn",
+      "final_epsilon": 0.9607509570263429,
+      "model_path": "/home/sidhanth/rl/outputs/smoke/dqn_seed0.pkl",
+      "train_rewards": [
+        0.0066312628728576375,
+        0.003266291410553066,
+        0.004604395391688222,
+        0.009570461647006952,
+        0.0035975561402863633,
+        0.006098582617291821,
+        0.006654886393998962,
+        0.003884686321424205,
+        0.00025485508654660486,
+        0.003728524146698129,
+        0.005064559190137013,
+        0.0019263185642758361,
+        0.00262305515398232,
+        0.005344831628438687,
+        0.005243553474210816,
+        0.0012662508651221083,
+        0.001523473311254808,
+        0.0021990417880719914,
+        0.005061623885448776,
+        0.007780084206424966
+      ]
+    }
+  ],
+  "summaries": [
+    {
+      "method": "Fixed Pricing",
+      "profit_mean": 0.003947487973401987,
+      "profit_std": 0.002029967109779004,
+      "gross_profit_mean": 0.004177024207163757,
+      "gross_profit_std": 0.0021425692135380765,
+      "accept_mean": 0.08666666666666667,
+      "accept_std": 0.045215533220835116,
+      "rate_mean": 8.223521628352257,
+      "rate_std": 0.11142353611014778,
+      "default_mean": 0.5406183549843074,
+      "risk_cost_mean": 0.00022953623376176943,
+      "episodes": 5,
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "method": "Rule-Based",
+      "profit_mean": 0.003769199384035744,
+      "profit_std": 0.002407693800129677,
+      "gross_profit_mean": 0.003983503734678399,
+      "gross_profit_std": 0.002549906032597903,
+      "accept_mean": 0.08666666666666667,
+      "accept_std": 0.0541602560309064,
+      "rate_mean": 8.25185496168559,
+      "rate_std": 0.20305673997816379,
+      "default_mean": 0.5406183549843074,
+      "risk_cost_mean": 0.0002143043506426541,
+      "episodes": 5,
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "method": "Q-Learning",
+      "profit_mean": 0.006639576490080267,
+      "profit_std": 0.0008903857257326086,
+      "gross_profit_mean": 0.007398648957603805,
+      "gross_profit_std": 0.0008958658748625858,
+      "accept_mean": 0.2733333333333333,
+      "accept_std": 0.024944382578492935,
+      "rate_mean": 5.7101882950189236,
+      "rate_std": 0.07331568440395775,
+      "default_mean": 0.5406183549843074,
+      "risk_cost_mean": 0.0007590724675235388,
+      "episodes": 5,
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "method": "Policy Gradient",
+      "profit_mean": 0.00535159312196708,
+      "profit_std": 0.0024979042077826687,
+      "gross_profit_mean": 0.005895433706371504,
+      "gross_profit_std": 0.0027759816556001235,
+      "accept_mean": 0.20666666666666664,
+      "accept_std": 0.118133634311129,
+      "rate_mean": 6.440188295018922,
+      "rate_std": 0.9782020985626811,
+      "default_mean": 0.5406183549843074,
+      "risk_cost_mean": 0.0005438405844044235,
+      "episodes": 5,
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "method": "DQN",
+      "profit_mean": 0.005647791867072937,
+      "profit_std": 0.0009700171501435805,
+      "gross_profit_mean": 0.0063611686852391314,
+      "gross_profit_std": 0.001089113219926432,
+      "accept_mean": 0.2733333333333333,
+      "accept_std": 0.0879393730551528,
+      "rate_mean": 5.640188295018925,
+      "rate_std": 0.6395533915904481,
+      "default_mean": 0.5406183549843074,
+      "risk_cost_mean": 0.0007133768181661929,
+      "episodes": 5,
+      "seeds": [
+        0
+      ]
+    }
+  ]
+}

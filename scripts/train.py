@@ -19,11 +19,15 @@ from rl_pricing.training import run_full_experiment
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RL dynamic pricing experiment")
     parser.add_argument("--train-episodes", type=int, default=PricingConfig.train_episodes)
-    parser.add_argument("--eval-episodes", type=int, default=PricingConfig.eval_episodes)
+    parser.add_argument("--eval-episodes",  type=int, default=PricingConfig.eval_episodes)
     parser.add_argument("--seeds", type=int, nargs="*", default=list(PricingConfig.seeds))
     parser.add_argument("--episode-length", type=int, default=PricingConfig.episode_length)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--no-plot", action="store_true",
+                        help="Skip generating the results plot.")
+    parser.add_argument("--no-dqn", action="store_true",
+                        help="Skip DQN training and reproduce the original "
+                             "two-agent (Q-Learning + Policy Gradient) experiment.")
     return parser.parse_args()
 
 
@@ -42,14 +46,15 @@ def main() -> None:
         train_episodes=args.train_episodes,
         eval_episodes=args.eval_episodes,
         output_dir=args.output_dir,
+        include_dqn=not args.no_dqn,
     )
+
     summaries = [MetricSummary(**item) for item in results["summaries"]]
     print(format_summary_table(summaries))
     print(f"\nSaved results to {results['results_path']}")
 
     if not args.no_plot:
         from rl_pricing.plotting import plot_experiment
-
         plot_path = args.output_dir / "results_plot.png"
         saved_plot = plot_experiment(results, plot_path)
         print(f"Saved plot to {saved_plot}")

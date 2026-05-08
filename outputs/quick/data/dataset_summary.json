@@ -1,0 +1,35 @@
+{
+  "total_applications": 5000,
+  "episodes": 50,
+  "episode_length": 100,
+  "demand_distribution": {
+    "low (0)": 0.346,
+    "medium (1)": 0.33,
+    "high (2)": 0.324
+  },
+  "credit_distribution": {
+    "poor (1)": 0.245,
+    "fair (2)": 0.499,
+    "good (3)": 0.255
+  },
+  "market_rate": {
+    "mean": 0.0509,
+    "std": 0.0061,
+    "min": 0.0331,
+    "max": 0.073
+  },
+  "optimal_rate_pct": {
+    "mean": 5.79,
+    "std": 0.12,
+    "min": 5.65,
+    "max": 6.05
+  },
+  "default_probability": {
+    "mean": 0.4963,
+    "std": 0.2694
+  },
+  "acceptance_at_optimal_rate": {
+    "mean": 0.2651,
+    "std": 0.0669
+  }
+}
