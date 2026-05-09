@@ -87,10 +87,10 @@ python scripts/train.py \
     --train-episodes 5000 \
     --eval-episodes 500 \
     --episode-length 200 \
-    --output-dir outputs/full
+    --output-dir outputs/
 ```
 
-### Original two-agent experiment (skip DQN)
+### Two-agent experiment (skip DQN)
 ```bash
 python scripts/train.py --no-dqn
 ```
@@ -102,20 +102,20 @@ python scripts/evaluate.py
 
 # All five methods
 python scripts/evaluate.py \
-    --q-model   outputs/full/q_learning_seed0.pkl \
-    --pg-model  outputs/full/policy_gradient_seed0.pkl \
-    --dqn-model outputs/full/dqn_seed0.pkl
+    --q-model   outputs/q_learning_seed0.pkl \
+    --pg-model  outputs/policy_gradient_seed0.pkl \
+    --dqn-model outputs/dqn_seed0.pkl
 
 # Custom episode count and seeds
 python scripts/evaluate.py \
-    --dqn-model outputs/full/dqn_seed0.pkl \
+    --dqn-model outputs/dqn_seed0.pkl \
     --episodes 200 \
     --seeds 0 1 2
 ```
 
 ### Generate the synthetic dataset separately
 ```bash
-python scripts/generate_dataset.py --episodes 500 --output-dir outputs/data
+python scripts/generate_dataset.py --episodes 500 --output-dir outputs/
 ```
 
 ---
@@ -222,7 +222,7 @@ run_full_experiment(config=config, output_dir="outputs/custom")
 
 ## Output Files
 
-After a full training run, `outputs/full/` contains:
+After a full training run, `outputs/` contains:
 
 | File | Contents |
 |---|---|

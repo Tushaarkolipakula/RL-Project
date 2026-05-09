@@ -88,7 +88,7 @@
     "dqn_tau": 0.005,
     "dqn_n_step": 5
   },
-  "runtime_seconds": 8345.604459762573,
+  "runtime_seconds": 7204.444248914719,
   "training": [
     {
       "seed": 0,
