@@ -3,6 +3,10 @@
 Trains Q-Learning, Policy Gradient, and DQN agents and evaluates each at
 fixed episode checkpoints. Shows how quickly each agent learns.
 
+Crash-safe: results are saved to a per-seed JSON file after every seed
+completes. If the script crashes, re-running it automatically skips seeds
+that already have a saved file and picks up from where it left off.
+
 Checkpoints: 100, 250, 500, 1000, 2000, 5000 episodes.
 
 Usage
@@ -10,20 +14,18 @@ Usage
 # Default (2 seeds, all checkpoints)
 python scripts/ablation_sample_efficiency.py
 
-# Faster run (1 seed, fewer checkpoints)
-python scripts/ablation_sample_efficiency.py --seeds 0 --checkpoints 100 500 1000 5000
-
 # Full paper-scale
 python scripts/ablation_sample_efficiency.py --seeds 0 1 2 3 4
+
+# Faster run (1 seed, fewer checkpoints)
+python scripts/ablation_sample_efficiency.py --seeds 0 --checkpoints 100 500 1000 5000
 """
 
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -41,36 +43,125 @@ from rl_pricing.policies import FixedRatePolicy, RuleBasedPolicy
 
 DEFAULT_CHECKPOINTS = [100, 250, 500, 1000, 2000, 5000]
 DEFAULT_SEEDS       = [0, 1]
-EVAL_EPISODES       = 200   # kept short so checkpoints are fast
+EVAL_EPISODES       = 200
 EPISODE_LENGTH      = 200
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Generic checkpoint trainer
+# Cache helpers — one JSON file per seed
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _train_to_checkpoint(agent, env, n_episodes: int, decay_epsilon: bool) -> float:
-    """Run `n_episodes` episodes; return mean per-step reward of last 50 episodes."""
-    recent: list[float] = []
-    for ep in range(n_episodes):
+def _cache_path(output_dir: Path, seed: int) -> Path:
+    return output_dir / f"_se_seed{seed}.json"
+
+
+def _load_cache(output_dir: Path, seed: int) -> dict | None:
+    p = _cache_path(output_dir, seed)
+    if p.exists():
+        with p.open() as f:
+            return json.load(f)
+    return None
+
+
+def _save_cache(output_dir: Path, seed: int, data: dict) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with _cache_path(output_dir, seed).open("w") as f:
+        json.dump(data, f, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Training / evaluation helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _train_steps(agent, env, n_episodes: int, decay_epsilon: bool) -> None:
+    for _ in range(n_episodes):
         obs = env.reset()
         agent.start_episode(obs)
-        done   = False
-        ep_rew = 0.0
-        steps  = 0
+        done = False
         while not done:
             action = agent.act(obs, greedy=False)
             next_obs, reward, done = env.step(action)
             agent.observe(obs, action, reward, next_obs, done)
-            ep_rew += reward
-            steps  += 1
-            obs     = next_obs
+            obs = next_obs
         if decay_epsilon:
             agent.decay_epsilon()
-        if ep >= n_episodes - 50:
-            recent.append(ep_rew / max(steps, 1))
-    return float(np.mean(recent)) if recent else 0.0
 
+
+def _eval_profit(agent, config: PricingConfig, seed: int) -> float:
+    summary, _ = evaluate_agent(
+        method="eval",
+        factory=lambda s, a=agent: a,
+        config=config,
+        seeds=[seed],
+        episodes=EVAL_EPISODES,
+        greedy=True,
+    )
+    return summary.profit_mean
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-seed runner
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_seed(seed: int, checkpoints: list[int], config: PricingConfig) -> dict:
+    """Train all three agents incrementally through checkpoints for one seed.
+
+    Each agent is created fresh and trained cumulatively up to each checkpoint.
+    Agents are deleted after use to free memory before the next one starts.
+
+    Returns { method: { str(checkpoint): profit } }
+    """
+    seed_results: dict[str, dict[str, float]] = {
+        "Q-Learning":      {},
+        "Policy Gradient": {},
+        "DQN":             {},
+    }
+
+    # ── Q-Learning ────────────────────────────────────────────────────────────
+    print("  Q-Learning …")
+    env   = LoanPricingEnv(config=config, seed=seed)
+    agent = ReplayQLearningAgent(config=config, seed=seed)
+    prev  = 0
+    for ckpt in checkpoints:
+        _train_steps(agent, env, ckpt - prev, decay_epsilon=True)
+        profit = _eval_profit(agent, config, seed)
+        seed_results["Q-Learning"][str(ckpt)] = profit
+        print(f"    ep={ckpt:>5}  profit/step={profit:+.5f}")
+        prev = ckpt
+    del agent, env
+
+    # ── Policy Gradient ───────────────────────────────────────────────────────
+    print("  Policy Gradient …")
+    env   = LoanPricingEnv(config=config, seed=seed)
+    agent = PolicyGradientAgent(config=config, seed=seed)
+    prev  = 0
+    for ckpt in checkpoints:
+        _train_steps(agent, env, ckpt - prev, decay_epsilon=False)
+        profit = _eval_profit(agent, config, seed)
+        seed_results["Policy Gradient"][str(ckpt)] = profit
+        print(f"    ep={ckpt:>5}  profit/step={profit:+.5f}")
+        prev = ckpt
+    del agent, env
+
+    # ── DQN ───────────────────────────────────────────────────────────────────
+    print("  DQN …")
+    env   = LoanPricingEnv(config=config, seed=seed)
+    agent = DQNAgent(config=config, seed=seed)
+    prev  = 0
+    for ckpt in checkpoints:
+        _train_steps(agent, env, ckpt - prev, decay_epsilon=True)
+        profit = _eval_profit(agent, config, seed)
+        seed_results["DQN"][str(ckpt)] = profit
+        print(f"    ep={ckpt:>5}  profit/step={profit:+.5f}")
+        prev = ckpt
+    del agent, env
+
+    return seed_results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_sample_efficiency(
     seeds: list[int],
@@ -79,77 +170,24 @@ def run_sample_efficiency(
     output_dir: Path,
 ) -> dict:
     checkpoints = sorted(checkpoints)
-    results: dict[str, dict[int, list[float]]] = {
-        "Q-Learning":      {c: [] for c in checkpoints},
-        "Policy Gradient": {c: [] for c in checkpoints},
-        "DQN":             {c: [] for c in checkpoints},
-    }
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Run (or resume) each seed ─────────────────────────────────────────────
+    all_seed_results: dict[int, dict] = {}
     for seed in seeds:
-        print(f"\n── Seed {seed} ──────────────────────────────────────────")
+        cached = _load_cache(output_dir, seed)
+        if cached is not None:
+            print(f"\n── Seed {seed} — resuming from cache ✓")
+            all_seed_results[seed] = cached
+        else:
+            print(f"\n── Seed {seed} ──────────────────────────────────────────")
+            seed_results = _run_seed(seed, checkpoints, config)
+            _save_cache(output_dir, seed, seed_results)
+            print(f"  └─ seed {seed} saved to cache ✓")
+            all_seed_results[seed] = seed_results
 
-        # ── Q-Learning ────────────────────────────────────────────────────────
-        print("  Q-Learning checkpoints …")
-        q_env   = LoanPricingEnv(config=config, seed=seed)
-        q_agent = ReplayQLearningAgent(config=config, seed=seed)
-        prev    = 0
-        for ckpt in checkpoints:
-            delta = ckpt - prev
-            _train_to_checkpoint(q_agent, q_env, delta, decay_epsilon=True)
-            # Greedy evaluation
-            summary, _ = evaluate_agent(
-                method="Q-Learning",
-                factory=lambda s, a=q_agent: a,
-                config=config,
-                seeds=[seed],
-                episodes=EVAL_EPISODES,
-                greedy=True,
-            )
-            results["Q-Learning"][ckpt].append(summary.profit_mean)
-            print(f"    ep={ckpt:>5}  profit/step={summary.profit_mean:+.5f}")
-            prev = ckpt
-
-        # ── Policy Gradient ───────────────────────────────────────────────────
-        print("  Policy Gradient checkpoints …")
-        pg_env   = LoanPricingEnv(config=config, seed=seed)
-        pg_agent = PolicyGradientAgent(config=config, seed=seed)
-        prev     = 0
-        for ckpt in checkpoints:
-            delta = ckpt - prev
-            _train_to_checkpoint(pg_agent, pg_env, delta, decay_epsilon=False)
-            summary, _ = evaluate_agent(
-                method="Policy Gradient",
-                factory=lambda s, a=pg_agent: a,
-                config=config,
-                seeds=[seed],
-                episodes=EVAL_EPISODES,
-                greedy=True,
-            )
-            results["Policy Gradient"][ckpt].append(summary.profit_mean)
-            print(f"    ep={ckpt:>5}  profit/step={summary.profit_mean:+.5f}")
-            prev = ckpt
-
-        # ── DQN ───────────────────────────────────────────────────────────────
-        print("  DQN checkpoints …")
-        dqn_env   = LoanPricingEnv(config=config, seed=seed)
-        dqn_agent = DQNAgent(config=config, seed=seed)
-        prev      = 0
-        for ckpt in checkpoints:
-            delta = ckpt - prev
-            _train_to_checkpoint(dqn_agent, dqn_env, delta, decay_epsilon=True)
-            summary, _ = evaluate_agent(
-                method="DQN",
-                factory=lambda s, a=dqn_agent: a,
-                config=config,
-                seeds=[seed],
-                episodes=EVAL_EPISODES,
-                greedy=True,
-            )
-            results["DQN"][ckpt].append(summary.profit_mean)
-            print(f"    ep={ckpt:>5}  profit/step={summary.profit_mean:+.5f}")
-            prev = ckpt
-
-    # ── Baseline references (episode-independent) ─────────────────────────────
+    # ── Baselines ─────────────────────────────────────────────────────────────
+    print("\nEvaluating baselines …")
     baselines: dict[str, float] = {}
     for name, factory in [
         ("Fixed Pricing", lambda s: FixedRatePolicy(config=config)),
@@ -160,16 +198,21 @@ def run_sample_efficiency(
             seeds=seeds, episodes=EVAL_EPISODES, greedy=True,
         )
         baselines[name] = summary.profit_mean
-        print(f"\nBaseline {name}: profit/step={summary.profit_mean:+.5f}")
+        print(f"  {name}: profit/step={summary.profit_mean:+.5f}")
 
-    # ── Aggregate across seeds ────────────────────────────────────────────────
-    aggregated: dict[str, dict[str, list]] = {}
-    for method, ckpt_data in results.items():
+    # ── Aggregate ─────────────────────────────────────────────────────────────
+    methods = ["Q-Learning", "Policy Gradient", "DQN"]
+    aggregated: dict[str, dict] = {}
+    for method in methods:
+        per_ckpt: dict[int, list[float]] = {c: [] for c in checkpoints}
+        for seed in seeds:
+            for ckpt in checkpoints:
+                per_ckpt[ckpt].append(all_seed_results[seed][method][str(ckpt)])
         aggregated[method] = {
             "checkpoints": checkpoints,
-            "mean":  [float(np.mean(ckpt_data[c])) for c in checkpoints],
-            "std":   [float(np.std(ckpt_data[c]))  for c in checkpoints],
-            "seeds": {str(c): ckpt_data[c]          for c in checkpoints},
+            "mean": [float(np.mean(per_ckpt[c])) for c in checkpoints],
+            "std":  [float(np.std(per_ckpt[c]))  for c in checkpoints],
+            "per_seed": {str(c): per_ckpt[c]      for c in checkpoints},
         }
 
     output: dict = {
@@ -180,27 +223,27 @@ def run_sample_efficiency(
     }
 
     out_path = output_dir / "ablation_sample_efficiency.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         json.dump(output, f, indent=2)
-    print(f"\nSaved → {out_path}")
+    print(f"\nFinal results → {out_path}")
 
-    # ── Print summary table ───────────────────────────────────────────────────
-    col_w = 14
-    header = f"{'Episodes':>10}" + "".join(f"{'Q-Learning':>{col_w}}{'PG':>{col_w}}{'DQN':>{col_w}}")
-    print("\n" + "─" * len(header))
-    print("Sample Efficiency — Mean Profit/step across seeds")
-    print("─" * len(header))
+    # ── Summary table ─────────────────────────────────────────────────────────
+    col_w = 22
+    header = f"{'Episodes':>10}" + "".join(f"{m:>{col_w}}" for m in methods)
+    sep    = "─" * len(header)
+    print(f"\n{sep}")
+    print("Sample Efficiency — Mean Profit/step (± std) across seeds")
+    print(sep)
     print(header)
-    print("─" * len(header))
+    print(sep)
     for i, ckpt in enumerate(checkpoints):
         row = f"{ckpt:>10}"
-        for method in ["Q-Learning", "Policy Gradient", "DQN"]:
+        for method in methods:
             m = aggregated[method]["mean"][i]
             s = aggregated[method]["std"][i]
-            row += f"  {m:+.5f}±{s:.4f}"
+            row += f"  {m:+.5f} ± {s:.4f}    "
         print(row)
-    print("─" * len(header))
+    print(sep)
     print(f"  Fixed Pricing baseline : {baselines['Fixed Pricing']:+.5f}")
     print(f"  Rule-Based    baseline : {baselines['Rule-Based']:+.5f}")
 
@@ -225,7 +268,8 @@ def _plot(aggregated, baselines, checkpoints, output_dir: Path) -> None:
     for method, colour in colours.items():
         means = aggregated[method]["mean"]
         stds  = aggregated[method]["std"]
-        ax.plot(checkpoints, means, marker="o", label=method, color=colour, linewidth=2)
+        ax.plot(checkpoints, means, marker="o", label=method,
+                color=colour, linewidth=2)
         ax.fill_between(
             checkpoints,
             [m - s for m, s in zip(means, stds)],
@@ -256,10 +300,10 @@ def _plot(aggregated, baselines, checkpoints, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Ablation 1 — Sample Efficiency")
-    p.add_argument("--seeds",       type=int, nargs="+", default=DEFAULT_SEEDS)
-    p.add_argument("--checkpoints", type=int, nargs="+", default=DEFAULT_CHECKPOINTS)
+    p.add_argument("--seeds",          type=int, nargs="+", default=DEFAULT_SEEDS)
+    p.add_argument("--checkpoints",    type=int, nargs="+", default=DEFAULT_CHECKPOINTS)
     p.add_argument("--episode-length", type=int, default=EPISODE_LENGTH)
-    p.add_argument("--output-dir",  type=Path, default=Path("outputs/ablations"))
+    p.add_argument("--output-dir",     type=Path, default=Path("outputs/ablations"))
     return p.parse_args()
 
 

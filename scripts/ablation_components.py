@@ -3,31 +3,31 @@
 Tests what each agent's key architectural component contributes by removing it:
 
   Q-Learning:
-    - Full (planning_steps=12)          ← default
-    - No Dyna replay (planning_steps=0) ← ablated
+    - Full (planning_steps=12)           ← default
+    - No Dyna replay (planning_steps=0)  ← ablated
 
   Policy Gradient:
-    - Full (return normalisation ON)    ← default
-    - No normalisation                  ← ablated
+    - Full (return normalisation ON)     ← default
+    - No normalisation                   ← ablated
 
   DQN:
-    - Full (Double DQN + n_step=5)      ← default
-    - Single DQN (online net for target)← ablated
-    - No n-step  (n_step=1)             ← ablated
+    - Full (Double DQN + n_step=5)       ← default
+    - Single DQN (online net for target) ← ablated
+    - No n-step  (n_step=1)              ← ablated
 
-Each variant is trained for the full episode count and evaluated.
-Results show what each component actually contributes.
+Crash-safe: results are saved to a per-seed JSON file after every seed
+completes. Re-running the script skips already-completed seeds automatically.
 
 Usage
 -----
-# Default (2 seeds, 2000 train episodes — faster than full)
-python scripts/ablation_components.py
-
-# Full scale
-python scripts/ablation_components.py --seeds 0 1 2 3 4 --train-episodes 5000
-
 # Quick smoke-test
 python scripts/ablation_components.py --seeds 0 --train-episodes 500
+
+# Recommended for report (2 seeds, 2000 episodes)
+python scripts/ablation_components.py --seeds 0 1 --train-episodes 2000
+
+# Full scale (5 seeds, 5000 episodes)
+python scripts/ablation_components.py --seeds 0 1 2 3 4 --train-episodes 5000
 """
 
 from __future__ import annotations
@@ -63,9 +63,8 @@ EPISODE_LENGTH         = 200
 class _PGNoNorm(PolicyGradientAgent):
     """PolicyGradientAgent with per-episode return normalisation disabled.
 
-    Only _reinforce_update() is overridden — the normalisation block
-    (lines 338-340 in agents.py) is simply removed. Everything else
-    (buffering, Adam, backprop) is identical to the parent.
+    Only _reinforce_update() is overridden — the 3-line normalisation block
+    is removed. Buffering, backprop, and Adam are all inherited unchanged.
     """
 
     def _reinforce_update(self) -> None:
@@ -80,8 +79,8 @@ class _PGNoNorm(PolicyGradientAgent):
             returns[t] = G
 
         # ── NO normalisation (ablated) ────────────────────────────────────────
-        # Parent does: returns = (returns - returns.mean()) / (std + 1e-8)
-        # We skip that entirely so raw return magnitudes drive the gradient.
+        # Parent: std = returns.std()
+        #         if std > 1e-8: returns = (returns - returns.mean()) / (std + 1e-8)
 
         dW1 = np.zeros_like(self.W1); db1 = np.zeros_like(self.b1)
         dW2 = np.zeros_like(self.W2); db2 = np.zeros_like(self.b2)
@@ -94,20 +93,20 @@ class _PGNoNorm(PolicyGradientAgent):
 
             h1, h2, probs = self._forward(s)
 
-            d_logits      = -probs.copy()
-            d_logits[a]  += 1.0
-            d_logits     *= G_t
+            d_logits     = -probs.copy()
+            d_logits[a] += 1.0
+            d_logits    *= G_t
 
             dW3 += np.outer(h2, d_logits);  db3 += d_logits
             d_h2 = d_logits @ self.W3.T * (h2 > 0)
             dW2 += np.outer(h1, d_h2);      db2 += d_h2
             d_h1 = d_h2 @ self.W2.T * (h1 > 0)
-            dW1 += np.outer(s, d_h1);       db1 += d_h1
+            dW1 += np.outer(s,  d_h1);      db1 += d_h1
 
         # Adam ascent — identical to parent
         self._t += 1
-        grads = {"W1": dW1, "b1": db1, "W2": dW2,
-                 "b2": db2, "W3": dW3, "b3": db3}
+        grads  = {"W1": dW1, "b1": db1, "W2": dW2,
+                  "b2": db2, "W3": dW3, "b3": db3}
         beta1, beta2, eps = 0.9, 0.999, 1e-8
         for name, param in self._params():
             g             = grads[name]
@@ -119,15 +118,17 @@ class _PGNoNorm(PolicyGradientAgent):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Patched DQN — Single DQN (online net scores next actions AND selects them)
+# Patched DQN — Single DQN (no Double-DQN)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _DQNSingle(DQNAgent):
-    """DQNAgent with Double-DQN disabled — uses online net for both selection
-    and scoring of the next action, reintroducing maximisation bias."""
+    """DQNAgent with Double-DQN disabled.
+
+    Uses the online network to both select and score next actions,
+    reintroducing the maximisation bias that Double DQN was designed to fix.
+    """
 
     def _learn(self) -> None:
-        import numpy as np
         batch = self.replay.sample(self.batch_size)
         B     = len(batch)
 
@@ -144,17 +145,18 @@ class _DQNSingle(DQNAgent):
         Q_online, cache = self.online_net.forward(S)
 
         # ── Single DQN: online net selects AND scores (ablated) ───────────────
-        Q_next_online = self.online_net.predict(S_next)          # was target net
-        next_actions  = np.argmax(Q_next_online, axis=1)
-        Q_next_val    = Q_next_online[np.arange(B), next_actions]
+        # Double DQN: online selects, target scores → removes maximisation bias
+        # Single DQN: online does both → bias reintroduced
+        Q_next        = self.online_net.predict(S_next)
+        next_actions  = np.argmax(Q_next, axis=1)
+        Q_next_val    = Q_next[np.arange(B), next_actions]
 
         gamma_n = self.gamma ** self.n_step
         target  = R + gamma_n * Q_next_val * (1.0 - Done)
 
         Q_taken = Q_online[np.arange(B), A]
         td_err  = Q_taken - target
-        delta   = 1.0
-        huber_g = np.where(np.abs(td_err) <= delta, td_err, delta * np.sign(td_err))
+        huber_g = np.where(np.abs(td_err) <= 1.0, td_err, np.sign(td_err))
 
         dQ = np.zeros_like(Q_online)
         dQ[np.arange(B), A] = huber_g / B
@@ -162,43 +164,75 @@ class _DQNSingle(DQNAgent):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Training helper
+# Cache helpers — one JSON file per seed
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _train_and_eval(
-    agent,
-    config: PricingConfig,
+def _cache_path(output_dir: Path, seed: int) -> Path:
+    return output_dir / f"_comp_seed{seed}.json"
+
+
+def _load_cache(output_dir: Path, seed: int) -> dict | None:
+    p = _cache_path(output_dir, seed)
+    if p.exists():
+        with p.open() as f:
+            return json.load(f)
+    return None
+
+
+def _save_cache(output_dir: Path, seed: int, data: dict) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with _cache_path(output_dir, seed).open("w") as f:
+        json.dump(data, f, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-seed runner
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_seed(
     seed: int,
-    decay_epsilon: bool,
+    variants: list[tuple[str, callable, bool]],
+    config: PricingConfig,
     eval_episodes: int,
-    method_label: str,
-) -> float:
-    env = LoanPricingEnv(config=config, seed=seed)
-    for _ in range(config.train_episodes):
-        obs = env.reset()
-        agent.start_episode(obs)
-        done = False
-        while not done:
-            action = agent.act(obs, greedy=False)
-            next_obs, reward, done = env.step(action)
-            agent.observe(obs, action, reward, next_obs, done)
-            obs = next_obs
-        if decay_epsilon:
-            agent.decay_epsilon()
+) -> dict[str, float]:
+    """Train every variant for one seed; return { label: profit }."""
+    seed_results: dict[str, float] = {}
 
-    summary, _ = evaluate_agent(
-        method=method_label,
-        factory=lambda s, a=agent: a,
-        config=config,
-        seeds=[seed],
-        episodes=eval_episodes,
-        greedy=True,
-    )
-    return summary.profit_mean
+    for label, factory, decay_epsilon in variants:
+        agent = factory(seed)
+        env   = LoanPricingEnv(config=config, seed=seed)
+
+        for _ in range(config.train_episodes):
+            obs = env.reset()
+            agent.start_episode(obs)
+            done = False
+            while not done:
+                action = agent.act(obs, greedy=False)
+                next_obs, reward, done = env.step(action)
+                agent.observe(obs, action, reward, next_obs, done)
+                obs = next_obs
+            if decay_epsilon:
+                agent.decay_epsilon()
+
+        summary, _ = evaluate_agent(
+            method=label,
+            factory=lambda s, a=agent: a,
+            config=config,
+            seeds=[seed],
+            episodes=eval_episodes,
+            greedy=True,
+        )
+        profit = summary.profit_mean
+        seed_results[label] = profit
+        print(f"  {label:<35}  profit/step={profit:+.5f}")
+
+        del agent, env   # free memory before next variant
+
+    return seed_results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main ablation runner
+# Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_component_ablations(
@@ -207,77 +241,57 @@ def run_component_ablations(
     eval_episodes: int,
     output_dir: Path,
 ) -> dict:
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Variant definitions: (label, agent_factory, decay_epsilon)
     variants: list[tuple[str, callable, bool]] = [
-        # Q-Learning
-        (
-            "Q-Learning (full)",
-            lambda seed: ReplayQLearningAgent(config=config, seed=seed),
-            True,
-        ),
-        (
-            "Q-Learning (no Dyna replay)",
-            lambda seed: ReplayQLearningAgent(
-                config=replace(config, planning_steps=0), seed=seed
-            ),
-            True,
-        ),
-        # Policy Gradient
-        (
-            "PG (full)",
-            lambda seed: PolicyGradientAgent(config=config, seed=seed),
-            False,
-        ),
-        (
-            "PG (no return norm)",
-            lambda seed: _PGNoNorm(config=config, seed=seed),
-            False,
-        ),
-        # DQN
-        (
-            "DQN (full)",
-            lambda seed: DQNAgent(config=config, seed=seed),
-            True,
-        ),
-        (
-            "DQN (single net)",
-            lambda seed: _DQNSingle(config=config, seed=seed),
-            True,
-        ),
-        (
-            "DQN (n_step=1)",
-            lambda seed: DQNAgent(config=replace(config, dqn_n_step=1), seed=seed),
-            True,
-        ),
+        ("Q-Learning (full)",
+         lambda seed: ReplayQLearningAgent(config=config, seed=seed),
+         True),
+        ("Q-Learning (no Dyna replay)",
+         lambda seed: ReplayQLearningAgent(
+             config=replace(config, planning_steps=0), seed=seed),
+         True),
+        ("PG (full)",
+         lambda seed: PolicyGradientAgent(config=config, seed=seed),
+         False),
+        ("PG (no return norm)",
+         lambda seed: _PGNoNorm(config=config, seed=seed),
+         False),
+        ("DQN (full)",
+         lambda seed: DQNAgent(config=config, seed=seed),
+         True),
+        ("DQN (single net)",
+         lambda seed: _DQNSingle(config=config, seed=seed),
+         True),
+        ("DQN (n_step=1)",
+         lambda seed: DQNAgent(config=replace(config, dqn_n_step=1), seed=seed),
+         True),
     ]
+    labels = [v[0] for v in variants]
 
-    results: dict[str, list[float]] = {label: [] for label, _, _ in variants}
-
+    # ── Run (or resume) each seed ─────────────────────────────────────────────
+    all_seed_results: dict[int, dict[str, float]] = {}
     for seed in seeds:
-        print(f"\n── Seed {seed} ──────────────────────────────────────────")
-        for label, factory, decay in variants:
-            agent  = factory(seed)
-            profit = _train_and_eval(
-                agent=agent,
-                config=config,
-                seed=seed,
-                decay_epsilon=decay,
-                eval_episodes=eval_episodes,
-                method_label=label,
-            )
-            results[label].append(profit)
-            print(f"  {label:<35}  profit/step={profit:+.5f}")
+        cached = _load_cache(output_dir, seed)
+        if cached is not None:
+            print(f"\n── Seed {seed} — resuming from cache ✓")
+            all_seed_results[seed] = cached
+        else:
+            print(f"\n── Seed {seed} ──────────────────────────────────────────")
+            seed_results = _run_seed(seed, variants, config, eval_episodes)
+            _save_cache(output_dir, seed, seed_results)
+            print(f"  └─ seed {seed} saved to cache ✓")
+            all_seed_results[seed] = seed_results
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
-    aggregated = {
-        label: {
-            "mean": float(np.mean(vals)),
-            "std":  float(np.std(vals)),
+    aggregated: dict[str, dict] = {}
+    for label in labels:
+        vals = [all_seed_results[s][label] for s in seeds]
+        aggregated[label] = {
+            "mean":     float(np.mean(vals)),
+            "std":      float(np.std(vals)),
             "per_seed": vals,
         }
-        for label, vals in results.items()
-    }
 
     output = {
         "seeds":          seeds,
@@ -287,31 +301,29 @@ def run_component_ablations(
     }
 
     out_path = output_dir / "ablation_components.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         json.dump(output, f, indent=2)
-    print(f"\nSaved → {out_path}")
+    print(f"\nFinal results → {out_path}")
 
-    # ── Print summary table ───────────────────────────────────────────────────
+    # ── Summary table ─────────────────────────────────────────────────────────
     groups = [
-        ("Q-Learning", ["Q-Learning (full)", "Q-Learning (no Dyna replay)"]),
-        ("Policy Gradient", ["PG (full)", "PG (no return norm)"]),
-        ("DQN", ["DQN (full)", "DQN (single net)", "DQN (n_step=1)"]),
+        ("Q-Learning",     ["Q-Learning (full)", "Q-Learning (no Dyna replay)"]),
+        ("Policy Gradient",["PG (full)",          "PG (no return norm)"]),
+        ("DQN",            ["DQN (full)",          "DQN (single net)", "DQN (n_step=1)"]),
     ]
-
-    print("\n" + "─" * 62)
-    print("Component Ablations — Mean Profit/step")
-    print("─" * 62)
-    for group_name, labels in groups:
+    print("\n" + "─" * 65)
+    print("Component Ablations — Mean Profit/step (± std) across seeds")
+    print("─" * 65)
+    for group_name, grp_labels in groups:
         print(f"\n  {group_name}")
-        full_mean = aggregated[labels[0]]["mean"]
-        for label in labels:
-            m    = aggregated[label]["mean"]
-            s    = aggregated[label]["std"]
+        full_mean = aggregated[grp_labels[0]]["mean"]
+        for lbl in grp_labels:
+            m    = aggregated[lbl]["mean"]
+            s    = aggregated[lbl]["std"]
             diff = m - full_mean
-            tag  = "" if label == labels[0] else f"  (Δ {diff:+.5f})"
-            print(f"    {label:<35}  {m:+.5f} ± {s:.4f}{tag}")
-    print("─" * 62)
+            tag  = "" if lbl == grp_labels[0] else f"  (Δ {diff:+.5f})"
+            print(f"    {lbl:<35}  {m:+.5f} ± {s:.4f}{tag}")
+    print("─" * 65)
 
     _plot(aggregated, groups, output_dir)
     return output
@@ -330,36 +342,32 @@ def _plot(aggregated, groups, output_dir: Path) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(13, 5), sharey=False)
     group_colours = {
-        "Q-Learning":    ["#2563eb", "#93c5fd"],
-        "Policy Gradient": ["#16a34a", "#86efac"],
-        "DQN":           ["#dc2626", "#fca5a5", "#fb923c"],
+        "Q-Learning":     ["#2563eb", "#93c5fd"],
+        "Policy Gradient":["#16a34a", "#86efac"],
+        "DQN":            ["#dc2626", "#fca5a5", "#fb923c"],
     }
 
-    for ax, (group_name, labels) in zip(axes, groups):
+    for ax, (group_name, grp_labels) in zip(axes, groups):
         colours = group_colours[group_name]
-        means   = [aggregated[l]["mean"] for l in labels]
-        stds    = [aggregated[l]["std"]  for l in labels]
-        short   = [l.split("(")[-1].rstrip(")") if "(" in l else "full" for l in labels]
+        means   = [aggregated[l]["mean"] for l in grp_labels]
+        stds    = [aggregated[l]["std"]  for l in grp_labels]
+        short   = [l.split("(")[-1].rstrip(")") if "(" in l else "full"
+                   for l in grp_labels]
 
-        bars = ax.bar(short, means, color=colours, edgecolor="white",
-                      linewidth=0.8, width=0.55)
-        ax.errorbar(
-            range(len(labels)), means, yerr=stds,
-            fmt="none", color="black", capsize=5, linewidth=1.5,
-        )
-        # Annotate values
-        for bar, m in zip(bars, means):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + max(stds) * 0.1,
-                f"{m:+.5f}", ha="center", va="bottom", fontsize=8,
-            )
+        bars = ax.bar(short, means, color=colours,
+                      edgecolor="white", linewidth=0.8, width=0.55)
+        ax.errorbar(range(len(grp_labels)), means, yerr=stds,
+                    fmt="none", color="black", capsize=5, linewidth=1.5)
+
+        for bar, m, s in zip(bars, means, stds):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + max(stds) * 0.15,
+                    f"{m:+.5f}", ha="center", va="bottom", fontsize=8)
 
         ax.set_title(group_name, fontweight="bold")
-        ax.set_ylabel("Profit / Step" if ax == axes[0] else "")
+        ax.set_ylabel("Profit / Step" if ax is axes[0] else "")
         ax.tick_params(axis="x", labelsize=8)
         ax.grid(axis="y", alpha=0.3)
-        # Shade the ablated bars slightly
         for i in range(1, len(bars)):
             bars[i].set_alpha(0.7)
 
@@ -379,11 +387,11 @@ def _plot(aggregated, groups, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Ablation 3 — Component Ablations")
-    p.add_argument("--seeds",           type=int, nargs="+", default=DEFAULT_SEEDS)
-    p.add_argument("--train-episodes",  type=int, default=DEFAULT_TRAIN_EPISODES)
-    p.add_argument("--eval-episodes",   type=int, default=DEFAULT_EVAL_EPISODES)
-    p.add_argument("--episode-length",  type=int, default=EPISODE_LENGTH)
-    p.add_argument("--output-dir",      type=Path, default=Path("outputs/ablations"))
+    p.add_argument("--seeds",          type=int, nargs="+", default=DEFAULT_SEEDS)
+    p.add_argument("--train-episodes", type=int, default=DEFAULT_TRAIN_EPISODES)
+    p.add_argument("--eval-episodes",  type=int, default=DEFAULT_EVAL_EPISODES)
+    p.add_argument("--episode-length", type=int, default=EPISODE_LENGTH)
+    p.add_argument("--output-dir",     type=Path, default=Path("outputs/ablations"))
     return p.parse_args()
 
 
