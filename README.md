@@ -1,4 +1,4 @@
-# RL Dynamic Pricing for Financial Products
+# RL Dynamic Pricing for Financial Products:
 
 Reinforcement learning agents that learn to price personal loans dynamically. The pricing decision is modelled as a Markov Decision Process: at each step the agent observes demand, customer credit score, market interest rate, and recent acceptance history, then adjusts the offered rate by one of five discrete increments. Reward is risk-adjusted profit on originated loans.
 
